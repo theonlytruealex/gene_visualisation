@@ -3,7 +3,6 @@ from flask import Flask, render_template_string
 import pandas as pd
 
 app = Flask(__name__)
-app.config["df"] = pd.read_csv("data.csv")
 
 app = volcano.init_dash("/volcano/", app)
 

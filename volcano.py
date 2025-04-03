@@ -1,14 +1,14 @@
-from dash import Dash, dcc, html, Input, Output
+from dash import Dash, dcc, html, Input, Output, no_update
 import plotly.express as px
 import pandas as pd
 import numpy as np
 
+df = pd.read_csv("data.csv")
 def init_dash(url_path: str, app) -> Dash:
     # Initialize Dash app
     dash_app = Dash(server=app, url_base_pathname=url_path)
     
     # Get DataFrame from config
-    df = app.config.get("df").copy()
     df['-log10(adj.P.Val)'] = -np.log10(df['adj.P.Val'])
     
     # Dash layout
@@ -30,7 +30,7 @@ def init_dash(url_path: str, app) -> Dash:
                         dcc.Input(id="fig-height", type="number", value=700, min=300, max=1200, step=100, className="styled-input"),
                     ], className="input-group"),
                 ], className="input-container"),
-
+                html.Label("Significance level", className="input-label"),
                 dcc.Slider(
                     id='significance-slider',
                     min=0.01,
@@ -41,10 +41,16 @@ def init_dash(url_path: str, app) -> Dash:
                 ),
             ], className="controls"),
 
-            # Graph container
+            # Graph container for volcano plot
             html.Div([
-                dcc.Graph(id='volcano-plot')
-            ], className="graph-container")
+                dcc.Graph(id='volcano-plot', clickData=None)
+            ], className="graph-container"),
+
+            # Box plot container (initially hidden)
+            html.Div(id="boxplot-container", style={"display": "none"}, children=[
+                html.H2("Expression Data", className="boxplot-title"),
+                dcc.Graph(id='box-plot')
+            ])
         ], className="centered-container")
     ], className="page-container")
 
@@ -76,9 +82,36 @@ def init_dash(url_path: str, app) -> Dash:
         # Apply user-defined figure size
         fig.update_layout(
             width=fig_width,
-            height=fig_height
+            height=fig_height,
+            showlegend=False
         )
         
         return fig
-    
+
+    @dash_app.callback(
+        [Output('box-plot', 'figure'),
+         Output('boxplot-container', 'style')],
+        Input('volcano-plot', 'clickData')
+    )
+    def update_boxplot(clickData):
+        if clickData is None:
+            return no_update, {"display": "none"}  # Hide box plot if no point is clicked
+
+        # Extract clicked gene
+        clicked_gene = clickData['points'][0]['hovertext']  # Assumes hover_name="EntrezGeneSymbol"
+
+        # Retrieve expression data (assuming df has expression data per sample)
+        expression_data = app.config.get("expression_data")  # DataFrame where rows = genes, columns = samples
+        if expression_data is None or clicked_gene not in expression_data.index:
+            return px.box(title=f"No expression data found for {clicked_gene}"), {"display": "block"}
+
+        # Convert expression data to long format for box plot
+        df_long = expression_data.loc[clicked_gene].reset_index()
+        df_long.columns = ["Sample", "Expression"]
+
+        # Create box plot
+        fig = px.box(df_long, y="Expression", title=f"Expression Distribution for {clicked_gene}")
+
+        return fig, {"display": "block"}  # Show box plot after click
+
     return dash_app.server
