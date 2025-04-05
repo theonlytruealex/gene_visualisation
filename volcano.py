@@ -2,24 +2,21 @@ from dash import Dash, dcc, html, Input, Output, no_update
 import plotly.express as px
 import pandas as pd
 import numpy as np
+import requests
 
 df = pd.read_csv("data.csv")
 gene_info = pd.read_csv("values.csv")
 donor_cols = [col for col in df.columns if '.OD' in col or '.YD' in col]
 
 def init_dash(url_path: str, app) -> Dash:
-    # Initialize Dash app
     dash_app = Dash(server=app, url_base_pathname=url_path)
     
-    # Get DataFrame from config
     df['-log10(adj.P.Val)'] = -np.log10(df['adj.P.Val'])
-    
-    # Dash layout
+
     dash_app.layout = html.Div([
         html.A("⬅ Back to Main Page", href="/", className="back-button"),
         html.H1("Volcano Plot", className="title"),
 
-        # Centered container for controls and graph
         html.Div([
             html.Div([
                 html.Div([
@@ -27,7 +24,6 @@ def init_dash(url_path: str, app) -> Dash:
                         html.Label("Figure Width:", className="input-label"),
                         dcc.Input(id="fig-width", type="number", value=1200, min=400, max=1600, step=100, className="styled-input"),
                     ], className="input-group"),
-
                     html.Div([
                         html.Label("Figure Height:", className="input-label"),
                         dcc.Input(id="fig-height", type="number", value=700, min=300, max=1200, step=100, className="styled-input"),
@@ -44,19 +40,39 @@ def init_dash(url_path: str, app) -> Dash:
                 ),
             ], className="controls"),
 
-            # Graph container for volcano plot
             html.Div([
                 dcc.Graph(id='volcano-plot', clickData=None)
             ], className="graph-container"),
 
-            # Box plot container (initially hidden)
+            # Boxplot and pubmed section
             html.Div(id="boxplot-container", style={"display": "none"}, children=[
-                html.H2("Expression Data", className="boxplot-title"),
-                dcc.Graph(id='box-plot')
+                html.Div([
+                    dcc.Graph(id='box-plot', style={
+                        "flex": "1",
+                        "marginLeft": "200px"
+                    }),
+
+                    dcc.Loading(
+                        id="loading-papers",
+                        type="circle",
+                        children=html.Div(id='pubmed-links', style={
+                            "flex": "1",
+                            "maxHeight": "500px",
+                            "overflowY": "scroll",
+                            "padding": "10px",
+                            "border": "1px solid #ccc",
+                            "borderRadius": "8px",
+                            "marginRight": "200px",
+                        })
+                    )
+                ], style={"display": "flex", "flexDirection": "row"}),
+
+                dcc.Store(id="selected-gene")
             ])
         ], className="centered-container")
     ], className="page-container")
 
+    # Volcano plot callback
     @dash_app.callback(
         Output('volcano-plot', 'figure'),
         [Input('significance-slider', 'value'),
@@ -67,7 +83,7 @@ def init_dash(url_path: str, app) -> Dash:
         df['Significance'] = df['adj.P.Val'] < significance_level
         df['Color'] = df.apply(lambda row: 'red' if row['Significance'] and row['logFC'] > 0 
                                else ('blue' if row['Significance'] else 'gray'), axis=1)
-        
+
         fig = px.scatter(
             df,
             x="logFC",
@@ -81,49 +97,86 @@ def init_dash(url_path: str, app) -> Dash:
             },
             color_discrete_map={"red": "red", "blue": "blue", "gray": "gray"}
         )
-        
-        # Apply user-defined figure size
+
         fig.update_layout(
             width=fig_width,
             height=fig_height,
             showlegend=False
         )
-        
         return fig
 
+    # Boxplot & gene store callback
     @dash_app.callback(
         [Output('box-plot', 'figure'),
-         Output('boxplot-container', 'style')],
+         Output('boxplot-container', 'style'),
+         Output('selected-gene', 'data')],
         Input('volcano-plot', 'clickData')
     )
-
     def update_boxplot(clickData):
         if clickData is None or 'points' not in clickData:
-            return no_update, {"display": "none"}
+            return no_update, {"display": "none"}, no_update
 
-
-        clicked_gene = clickData['points'][0].get('hovertext') 
+        clicked_gene = clickData['points'][0].get('hovertext')
         if not clicked_gene:
-            return no_update, {"display": "none"}
+            return no_update, {"display": "none"}, no_update
 
         gene_row = gene_info[gene_info['EntrezGeneSymbol'] == clicked_gene]
-
         donor_columns = [col for col in gene_info.columns if 'OD' in col or 'YD' in col]
         donor_values = gene_row[donor_columns]
 
         group = ['Old' if 'OD' in col else 'Young' for col in donor_columns]
         value = donor_values.values[0]
 
-        plot_df = pd.DataFrame({
-            'Group': group,
-            'Value': value
-        })
-
-        fig = px.box(plot_df, x='Group', y='Value', points='all', title=f'Protein Concentration for {clicked_gene}')
-
+        plot_df = pd.DataFrame({'Group': group, 'Value': value})
+        fig = px.box(plot_df, x='Group', y='Value', points='all',
+                     title=f'Protein Concentration for {clicked_gene}')
         fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
 
-        return fig, {"display": "block"}
+        return fig, {"display": "flex"}, clicked_gene
 
+    # PubMed link callback
+    @dash_app.callback(
+        Output('pubmed-links', 'children'),
+        Input('selected-gene', 'data')
+    )
+    def update_pubmed_links(gene_symbol):
+        if not gene_symbol:
+            return []
+
+        try:
+            gene_id = get_gene_id(gene_symbol)
+            papers = get_pubmed_links(gene_id, limit=10)
+            links = [
+                html.Div([
+                    html.A(p['title'], href=p['url'], target="_blank",
+                           style={"display": "block", "marginBottom": "10px"})
+                ]) for p in papers
+            ]
+        except Exception:
+            links = [html.Div("Failed to load PubMed articles.")]
+
+        return links
 
     return dash_app.server
+
+# --- API Utility Functions ---
+def get_gene_id(gene_symbol):
+    """Fetch MyGene.info gene ID from symbol (e.g., 'CDK2')."""
+    url = f"https://mygene.info/v3/query?q=symbol:{gene_symbol}"
+    response = requests.get(url).json()
+    return response["hits"][0]["_id"]
+
+def get_pubmed_links(gene_id, limit=10):
+    """Fetch PubMed titles/URLs for a gene ID."""
+    url = f"https://mygene.info/v3/gene/{gene_id}?fields=generif"
+    response = requests.get(url).json()
+    pubmed_ids = response.get('generif', [])[:limit]
+
+    papers = []
+    for pid in pubmed_ids:
+        if 'text' in pid and 'pubmed' in pid:
+            papers.append({
+                "title": pid['text'],
+                "url": f"https://pubmed.ncbi.nlm.nih.gov/{pid['pubmed']}"
+            })
+    return papers
