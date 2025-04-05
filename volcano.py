@@ -4,6 +4,9 @@ import pandas as pd
 import numpy as np
 
 df = pd.read_csv("data.csv")
+gene_info = pd.read_csv("values.csv")
+donor_cols = [col for col in df.columns if '.OD' in col or '.YD' in col]
+
 def init_dash(url_path: str, app) -> Dash:
     # Initialize Dash app
     dash_app = Dash(server=app, url_base_pathname=url_path)
@@ -93,25 +96,34 @@ def init_dash(url_path: str, app) -> Dash:
          Output('boxplot-container', 'style')],
         Input('volcano-plot', 'clickData')
     )
+
     def update_boxplot(clickData):
-        if clickData is None:
-            return no_update, {"display": "none"}  # Hide box plot if no point is clicked
+        if clickData is None or 'points' not in clickData:
+            return no_update, {"display": "none"}
 
-        # Extract clicked gene
-        clicked_gene = clickData['points'][0]['hovertext']  # Assumes hover_name="EntrezGeneSymbol"
 
-        # Retrieve expression data (assuming df has expression data per sample)
-        expression_data = app.config.get("expression_data")  # DataFrame where rows = genes, columns = samples
-        if expression_data is None or clicked_gene not in expression_data.index:
-            return px.box(title=f"No expression data found for {clicked_gene}"), {"display": "block"}
+        clicked_gene = clickData['points'][0].get('hovertext') 
+        if not clicked_gene:
+            return no_update, {"display": "none"}
 
-        # Convert expression data to long format for box plot
-        df_long = expression_data.loc[clicked_gene].reset_index()
-        df_long.columns = ["Sample", "Expression"]
+        gene_row = gene_info[gene_info['EntrezGeneSymbol'] == clicked_gene]
 
-        # Create box plot
-        fig = px.box(df_long, y="Expression", title=f"Expression Distribution for {clicked_gene}")
+        donor_columns = [col for col in gene_info.columns if 'OD' in col or 'YD' in col]
+        donor_values = gene_row[donor_columns]
 
-        return fig, {"display": "block"}  # Show box plot after click
+        group = ['Old' if 'OD' in col else 'Young' for col in donor_columns]
+        value = donor_values.values[0]
+
+        plot_df = pd.DataFrame({
+            'Group': group,
+            'Value': value
+        })
+
+        fig = px.box(plot_df, x='Group', y='Value', points='all', title=f'Protein Concentration for {clicked_gene}')
+
+        fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
+
+        return fig, {"display": "block"}
+
 
     return dash_app.server
