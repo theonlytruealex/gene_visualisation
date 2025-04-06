@@ -11,9 +11,11 @@ donor_cols = [col for col in df.columns if '.OD' in col or '.YD' in col]
 def init_dash(url_path: str, app) -> Dash:
     dash_app = Dash(server=app, url_base_pathname=url_path)
 
+    # Prepare P values
     df['-log10(adj.P.Val)'] = -np.log10(df['adj.P.Val'])
     dash_app.css.config.serve_locally = False
 
+    # Title and back button
     dash_app.layout = html.Div([
         html.Div([
             html.Div([
@@ -28,6 +30,8 @@ def init_dash(url_path: str, app) -> Dash:
 
         html.Div([
             html.Div([
+
+                # Settings for height and width of plot
                 html.Div([
                     html.Div([
                         html.Label("Figure Width:", className="input-label"),
@@ -39,6 +43,7 @@ def init_dash(url_path: str, app) -> Dash:
                     ], className="input-group"),
                 ], className="input-container"),
 
+                # Creating a significance slider from 0.01 to 0.1
                html.Div([
                 html.Label("Significance Level:", className="input-label"),
                 dcc.Slider(
@@ -53,10 +58,12 @@ def init_dash(url_path: str, app) -> Dash:
                 ], className="input-group", style={"width": "300px"}),
             ], className="controls"),
 
+            # Creating the actual plot
             html.Div([
                 dcc.Graph(id='volcano-plot', clickData=None)
             ], className="graph-container"),
 
+            # Boxplot and links container
             html.Div(id="boxplot-container", style={"display": "none", "max-width": "1200px"}, children=[
                 html.Div([
                     dcc.Graph(id='box-plot', style={
