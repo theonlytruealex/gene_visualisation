@@ -10,12 +10,21 @@ donor_cols = [col for col in df.columns if '.OD' in col or '.YD' in col]
 
 def init_dash(url_path: str, app) -> Dash:
     dash_app = Dash(server=app, url_base_pathname=url_path)
-    
+
     df['-log10(adj.P.Val)'] = -np.log10(df['adj.P.Val'])
+    dash_app.css.config.serve_locally = False
 
     dash_app.layout = html.Div([
-        html.A("⬅ Back to Main Page", href="/", className="back-button"),
-        html.H1("Volcano Plot", className="title"),
+        html.Div([
+            html.Div([
+                html.A("⬅ Back to Main Page", href="/", className="back-button")
+            ], className="header-section"),
+
+            html.H1("Volcano Plot", className="title"),
+
+            html.Div([], className="spacer")  # empty right side to balance
+        ], className="header-row"),
+
 
         html.Div([
             html.Div([
@@ -29,27 +38,29 @@ def init_dash(url_path: str, app) -> Dash:
                         dcc.Input(id="fig-height", type="number", value=700, min=300, max=1200, step=100, className="styled-input"),
                     ], className="input-group"),
                 ], className="input-container"),
-                html.Label("Significance level", className="input-label"),
+
+               html.Div([
+                html.Label("Significance Level:", className="input-label"),
                 dcc.Slider(
                     id='significance-slider',
                     min=0.01,
                     max=0.1,
                     value=0.05,
                     marks=None,
-                    tooltip={"placement": "bottom"}
-                ),
+                    tooltip={"placement": "bottom"},
+                    step=0.005,
+                )
+                ], className="input-group", style={"width": "300px"}),
             ], className="controls"),
 
             html.Div([
                 dcc.Graph(id='volcano-plot', clickData=None)
             ], className="graph-container"),
 
-            # Boxplot and pubmed section
-            html.Div(id="boxplot-container", style={"display": "none"}, children=[
+            html.Div(id="boxplot-container", style={"display": "none", "max-width": "1200px"}, children=[
                 html.Div([
                     dcc.Graph(id='box-plot', style={
                         "flex": "1",
-                        "marginLeft": "200px"
                     }),
 
                     dcc.Loading(
@@ -57,12 +68,13 @@ def init_dash(url_path: str, app) -> Dash:
                         type="circle",
                         children=html.Div(id='pubmed-links', style={
                             "flex": "1",
-                            "maxHeight": "500px",
+                            "maxHeight": "400px",
                             "overflowY": "scroll",
                             "padding": "10px",
                             "border": "1px solid #ccc",
                             "borderRadius": "8px",
-                            "marginRight": "200px",
+                            "max-width": "550px",
+                            "margin-top": "40px"
                         })
                     )
                 ], style={"display": "flex", "flexDirection": "row"}),
@@ -145,7 +157,7 @@ def init_dash(url_path: str, app) -> Dash:
 
         try:
             gene_id = get_gene_id(gene_symbol)
-            papers = get_pubmed_links(gene_id, limit=10)
+            papers = get_pubmed_links(gene_id)
             links = [
                 html.Div([
                     html.A(p['title'], href=p['url'], target="_blank",
@@ -166,11 +178,11 @@ def get_gene_id(gene_symbol):
     response = requests.get(url).json()
     return response["hits"][0]["_id"]
 
-def get_pubmed_links(gene_id, limit=10):
+def get_pubmed_links(gene_id):
     """Fetch PubMed titles/URLs for a gene ID."""
     url = f"https://mygene.info/v3/gene/{gene_id}?fields=generif"
     response = requests.get(url).json()
-    pubmed_ids = response.get('generif', [])[:limit]
+    pubmed_ids = response.get('generif', [])
 
     papers = []
     for pid in pubmed_ids:
